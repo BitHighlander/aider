@@ -1,0 +1,186 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@5.1.0
+  docker: circleci/docker@2.2.0
+  kubernetes: circleci/kubernetes@1.3.1
+
+parameters:
+  deploy-environment:
+    type: string
+    default: "development"
+
+jobs:
+  test:
+    docker:
+      - image: cimg/node:18.15
+      - image: mongo:5.0
+        command: [--replSet, rs0, --bind_ip_all]
+    steps:
+      - checkout
+      - run:
+          name: Initialize MongoDB Replica Set
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y mongodb-clients
+            mongo --eval "rs.initiate()"
+      - node/install-packages:
+          pkg-manager: npm
+          cache-path: ~/project/apps/aider-service/node_modules
+          app-dir: ~/project/apps/aider-service
+      - run:
+          name: Verify Git Submodules
+          command: |
+            cd ~/project
+            git submodule update --init --recursive
+      - run:
+          name: Run linting
+          command: |
+            cd ~/project/apps/aider-service
+            npm run lint
+      - run:
+          name: Run tests
+          command: |
+            cd ~/project/apps/aider-service
+            npm test
+      - run:
+          name: Build application
+          command: |
+            cd ~/project/apps/aider-service
+            npm run build
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - apps/aider-service/dist
+            - apps/aider-service/node_modules
+            - apps/aider-service/scripts
+
+  build-and-push:
+    docker:
+      - image: cimg/node:18.15
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.7
+      - attach_workspace:
+          at: ~/project
+      - docker/check:
+          registry: $DOCKER_REGISTRY
+      - run:
+          name: Set environment variables
+          command: |
+            echo "export DOCKER_TAG=${CIRCLE_SHA1}-<< pipeline.parameters.deploy-environment >>" >> $BASH_ENV
+            source $BASH_ENV
+      - docker/build:
+          image: pioneer/aider-service
+          tag: $DOCKER_TAG
+          path: ~/project/apps/aider-service
+      - docker/push:
+          image: pioneer/aider-service
+          tag: $DOCKER_TAG
+
+  deploy:
+    docker:
+      - image: cimg/node:18.15
+    parameters:
+      environment:
+        type: string
+        default: "development"
+      namespace:
+        type: string
+        default: "pioneer"
+    steps:
+      - checkout
+      - kubernetes/install-kubectl
+      - kubernetes/install-kubeconfig:
+          kubeconfig: KUBECONFIG_DATA
+      - run:
+          name: Set environment variables
+          command: |
+            echo "export DOCKER_TAG=${CIRCLE_SHA1}-<< parameters.environment >>" >> $BASH_ENV
+            source $BASH_ENV
+      - run:
+          name: Deploy to Kubernetes
+          command: |
+            kubectl -n << parameters.namespace >> set image deployment/aider-service aider-service=pioneer/aider-service:$DOCKER_TAG
+      - run:
+          name: Wait for deployment
+          command: |
+            kubectl -n << parameters.namespace >> rollout status deployment/aider-service --timeout=300s
+      - run:
+          name: MAGA verification
+          command: |
+            cd ~/project/apps/aider-service
+            # Give the service a moment to initialize
+            sleep 10
+            # Run MAGA verification
+            ./scripts/verify-deployment-health.sh -s aider-service -e << parameters.environment >>
+            # If successful, generate MAGA report
+            if [ $? -eq 0 ]; then
+              ./scripts/validate-maga-workflow.sh -b ${CIRCLE_BRANCH} -e << parameters.environment >> -s aider-service
+            else
+              echo "MAGA verification failed, deployment is unhealthy"
+              exit 1
+            fi
+
+workflows:
+  version: 2
+  build-test-deploy:
+    jobs:
+      - test
+      - build-and-push:
+          requires:
+            - test
+          filters:
+            branches:
+              only:
+                - develop
+                - master
+                - /feature\/.*/
+      - deploy:
+          name: deploy-development
+          environment: development
+          namespace: pioneer
+          requires:
+            - build-and-push
+          filters:
+            branches:
+              only:
+                - develop
+                - /feature\/.*/
+      - approve-staging:
+          type: approval
+          requires:
+            - deploy-development
+          filters:
+            branches:
+              only:
+                - develop
+      - deploy:
+          name: deploy-staging
+          environment: staging
+          namespace: pioneer-staging
+          requires:
+            - approve-staging
+          filters:
+            branches:
+              only:
+                - develop
+      - approve-production:
+          type: approval
+          requires:
+            - deploy-staging
+          filters:
+            branches:
+              only:
+                - master
+      - deploy:
+          name: deploy-production
+          environment: production
+          namespace: pioneer-prod
+          requires:
+            - approve-production
+          filters:
+            branches:
+              only:
+                - master

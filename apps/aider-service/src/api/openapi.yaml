@@ -1,0 +1,250 @@
+openapi: 3.0.0
+info:
+  title: Aider Service API
+  description: REST API for managing Aider AI assistant instances
+  version: 1.0.0
+servers:
+  - url: /api
+    description: Default API path
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check if the Aider service is running correctly
+      operationId: healthCheck
+      tags:
+        - system
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  version:
+                    type: string
+                    example: "1.0.0"
+  /instances:
+    get:
+      summary: List all Aider instances
+      description: Get status information for all running Aider instances
+      operationId: getAllInstances
+      tags:
+        - instances
+      responses:
+        '200':
+          description: List of all instances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AiderStatus'
+    post:
+      summary: Start a new Aider instance
+      description: Initialize and start a new Aider AI assistant instance
+      operationId: startInstance
+      tags:
+        - instances
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiderConfiguration'
+      responses:
+        '201':
+          description: Instance started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiderStatus'
+        '400':
+          description: Invalid configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /instances/{threadId}:
+    get:
+      summary: Get instance status
+      description: Get the current status of a specific Aider instance
+      operationId: getInstanceStatus
+      tags:
+        - instances
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Instance status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiderStatus'
+        '404':
+          description: Instance not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Stop an Aider instance
+      description: Stop a running Aider instance
+      operationId: stopInstance
+      tags:
+        - instances
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Instance stopped successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiderStatus'
+        '404':
+          description: Instance not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /instances/{threadId}/command:
+    post:
+      summary: Send command to an Aider instance
+      description: Send a command to a running Aider instance
+      operationId: sendCommand
+      tags:
+        - instances
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - command
+              properties:
+                command:
+                  type: string
+                  description: Command text to send to Aider
+      responses:
+        '200':
+          description: Command sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "Command sent"
+        '404':
+          description: Instance not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    AiderState:
+      type: string
+      enum:
+        - NOT_CONFIGURED
+        - RUNNING
+        - HALTED
+        - COMPLETED
+    AiderConfiguration:
+      type: object
+      required:
+        - openAIApiKey
+        - projectRoot
+      properties:
+        openAIApiKey:
+          type: string
+          description: OpenAI API key for Aider
+        githubToken:
+          type: string
+          description: GitHub token for repository access
+        model:
+          type: string
+          description: OpenAI model to use
+          default: "gpt-4"
+        projectRoot:
+          type: string
+          description: Root directory of the project to analyze
+        allowedFileTypes:
+          type: array
+          items:
+            type: string
+          description: List of file extensions to include
+    AiderStatus:
+      type: object
+      required:
+        - state
+        - threadId
+      properties:
+        state:
+          $ref: '#/components/schemas/AiderState'
+        diagnosticMessage:
+          type: string
+          description: Diagnostic information about the instance
+        threadId:
+          type: string
+          description: Unique identifier for this Aider instance
+        configuration:
+          $ref: '#/components/schemas/AiderConfiguration'
+        startTime:
+          type: string
+          format: date-time
+          description: When the instance was started
+        endTime:
+          type: string
+          format: date-time
+          description: When the instance stopped or completed
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message

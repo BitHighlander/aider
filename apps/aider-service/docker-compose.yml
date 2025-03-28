@@ -1,0 +1,26 @@
+services:
+  aider-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9876:9876"
+    environment:
+      - NODE_ENV=production
+      - PORT=9876
+      - MONGO_URI=${MONGO_CONNECTION}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GH_TOKEN=${GH_TOKEN}
+    volumes:
+      - ../../aider:/app/aider
+      - aider_repos:/tmp/aider-repos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9876/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  aider_repos: 
